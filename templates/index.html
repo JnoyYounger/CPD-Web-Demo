@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>显著物体检测系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <h1>显著物体检测系统-Demo</h1>
+    <div class="container">
+        <div>
+            <label>上传图像：</label>
+            <input type="file" id="imageInput" accept="image/*">
+        </div>
+        <div>
+            <label>上传真实标注（可选）：</label>
+            <input type="file" id="gtInput" accept="image/*">
+        </div>
+        <button id="uploadButton">上传并检测</button>
+        <div class="image-container">
+            <div>
+                <h3>原始图像</h3>
+                <img id="originalImage" src="" alt="原始图像" style="display:none;">
+            </div>
+            <div>
+                <h3>抠图图像</h3>
+                <img id="foregroundImage" src="" alt="抠图图像" style="display:none;">
+            </div>
+        </div>
+        <div id="metrics" style="display:none; margin-top:20px;">
+            <h3>评估指标</h3>
+            <table border="1">
+                <tr><th>MAE</th><th>Fβ</th><th>精确率</th><th>召回率</th><th>IoU</th></tr>
+                <tr>
+                    <td id="mae">-</td>
+                    <td id="fmeasure">-</td>
+                    <td id="precision">-</td>
+                    <td id="recall">-</td>
+                    <td id="iou">-</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    <script src="/static/js/script.js"></script>
+</body>
+</html>
