@@ -1,11 +1,12 @@
 import os
+import urllib.request
 import uuid
 from flask import Flask, request, jsonify, send_file, render_template
 import torch
 import numpy as np
 from PIL import Image
 import cv2
-from model.CPD_models import CPD_VGG
+from model.CPD_VGG import CPD_VGG
 from torchvision import transforms
 import metrics as mt
 
@@ -19,56 +20,72 @@ os.makedirs(RESULT_FOLDER, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CPD_VGG().to(device)
 model_path = os.path.join(os.path.dirname(__file__), 'CPD.pth')
+
+# 下载 CPD.pth（Vercel）
+if not os.path.exists(model_path):
+    print("下载 CPD.pth 从 OneDrive...")
+    onedrive_url = "https://1drv.ms/u/c/d09530a949aca22a/EUA1ann5EmNEiDdiyAbjfG0BVBJfR0rWfoRjInRA_Dg36w?e=ummNW9"  # 替换为你的 OneDrive 链接
+    urllib.request.urlretrieve(onedrive_url, model_path)
+    print("CPD.pth 下载完成")
+
+if not os.path.exists(model_path):
+    raise FileNotFoundError(f"模型权重文件未找到：{model_path}")
 try:
     model.load_state_dict(torch.load(model_path, map_location=device))
     print(f"成功加载模型权重：{model_path}")
 except Exception as e:
     print(f"加载模型权重失败：{e}")
+    raise RuntimeError("模型权重加载失败，请检查 CPD.pth 文件")
 model.eval()
 
 def process_image(image_path):
-    image = Image.open(image_path).convert('RGB')
-    transform = transforms.Compose([
-        transforms.Resize((352, 352)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    input_tensor = transform(image).unsqueeze(0).to(device)
-    with torch.no_grad():
-        pred = model(input_tensor)[0]
-        pred = torch.sigmoid(pred).squeeze().cpu().numpy()
-    print(f"预测值范围：min={pred.min()}, max={pred.max()}")
-    pred = (pred * 255).astype(np.uint8)
-    pred_image = Image.fromarray(pred)
-    unique_id = uuid.uuid4().hex
-    pred_path = os.path.join(RESULT_FOLDER, f'pred_mask_{unique_id}.png')
-    pred_image.save(pred_path)
-    print(f"预测 mask 保存至：{pred_path}")
-    pred_image = pred_image.resize(image.size, Image.BILINEAR)
-    pred_array = np.array(pred_image)
-    mask = cv2.threshold(pred_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    print(f"Mask 非零像素比例：{np.count_nonzero(mask) / mask.size:.4f}")
-    if np.count_nonzero(mask) / mask.size > 0.99:
-        print("警告：Mask 几乎全白，可能模型预测失败")
+    try:
+        image = Image.open(image_path).convert('RGB')
+        print(f"处理图像尺寸：{image.size}")
+        transform = transforms.Compose([
+            transforms.Resize((352, 352)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        input_tensor = transform(image).unsqueeze(0).to(device)
+        with torch.no_grad():
+            pred = model(input_tensor)[0]
+            pred = torch.sigmoid(pred).squeeze().cpu().numpy()
+        print(f"预测值范围：min={pred.min()}, max={pred.max()}")
+        pred = (pred * 255).astype(np.uint8)
+        pred_image = Image.fromarray(pred)
+        unique_id = uuid.uuid4().hex
+        pred_path = os.path.join(RESULT_FOLDER, f'pred_mask_{unique_id}.png')
+        pred_image.save(pred_path)
+        print(f"预测 mask 保存至：{pred_path}")
+        pred_image = pred_image.resize(image.size, Image.Resampling.BILINEAR)
+        pred_array = np.array(pred_image)
+        mask = cv2.threshold(pred_array, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        print(f"Mask 非零像素比例：{np.count_nonzero(mask) / mask.size:.4f}")
+        if np.count_nonzero(mask) / mask.size > 0.99:
+            print("警告：Mask 几乎全白，可能模型预测失败")
+            return None, None
+        original = np.array(image)
+        foreground = cv2.bitwise_and(original, original, mask=mask)
+        foreground_pil = Image.fromarray(foreground)
+        foreground_path = os.path.join(RESULT_FOLDER, f'foreground_only_{unique_id}.png')
+        foreground_pil.save(foreground_path)
+        print(f"前景保存至：{foreground_path}")
+        white_background = np.ones_like(original) * 255
+        mask_inv = cv2.bitwise_not(mask)
+        background = cv2.bitwise_and(white_background, white_background, mask=mask_inv)
+        background_pil = Image.fromarray(background)
+        background_path = os.path.join(RESULT_FOLDER, f'background_only_{unique_id}.png')
+        background_pil.save(background_path)
+        print(f"背景保存至：{background_path}")
+        final_image = cv2.add(foreground, background)
+        foreground_pil = Image.fromarray(final_image)
+        result_path = os.path.join(RESULT_FOLDER, f'foreground_{unique_id}.png')
+        foreground_pil.save(result_path)
+        return result_path, mask
+    except Exception as e:
+        print(f"图像处理失败：{e}")
         return None, None
-    original = np.array(image)
-    foreground = cv2.bitwise_and(original, original, mask=mask)
-    foreground_pil = Image.fromarray(foreground)
-    foreground_path = os.path.join(RESULT_FOLDER, f'foreground_only_{unique_id}.png')
-    foreground_pil.save(foreground_path)
-    print(f"前景保存至：{foreground_path}")
-    white_background = np.ones_like(original) * 255
-    mask_inv = cv2.bitwise_not(mask)
-    background = cv2.bitwise_and(white_background, white_background, mask=mask_inv)
-    background_pil = Image.fromarray(background)
-    background_path = os.path.join(RESULT_FOLDER, f'background_only_{unique_id}.png')
-    background_pil.save(background_path)
-    print(f"背景保存至：{background_path}")
-    final_image = cv2.add(foreground, background)
-    foreground_pil = Image.fromarray(final_image)
-    result_path = os.path.join(RESULT_FOLDER, f'foreground_{unique_id}.png')
-    foreground_pil.save(result_path)
-    return result_path, mask
 
 @app.route('/')
 def index():
